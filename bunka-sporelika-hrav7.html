@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Evoluce Buňky</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #0d1b2a; overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            /* touch-action is removed from body so the UI can be touched normally */
+            user-select: none; -webkit-user-select: none;
+        }
+        
+        canvas { 
+            display: block; 
+            /* This prevents the page from zooming/scrolling ONLY when touching the game canvas */
+            touch-action: none; 
+        }
+        
+        #ui-score {
+            position: absolute; top: 20px; left: 20px;
+            color: #ffca3a; font-size: 32px; font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8); pointer-events: none;
+            z-index: 5;
+        }
+        
+        #btn-evolve {
+            position: absolute; top: 20px; right: 20px;
+            background: #1b263b; border: 3px solid #41eadd; border-radius: 50%;
+            font-size: 40px; padding: 10px 15px; cursor: pointer;
+            box-shadow: 0 0 15px rgba(65, 234, 221, 0.5); display: none;
+            z-index: 5;
+            pointer-events: auto;
+        }
+        #btn-evolve:active { background: #41eadd; transform: scale(0.95); }
+
+        .overlay {
+            display: flex; position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(13, 27, 42, 0.95);
+            flex-direction: column; justify-content: center; align-items: center;
+            z-index: 10;
+        }
+        .hidden { display: none !important; }
+
+        .btn {
+            background: #1b263b; border: 3px solid #41eadd; border-radius: 20px;
+            font-size: 40px; padding: 15px 30px; margin: 15px; cursor: pointer;
+            display: flex; align-items: center; gap: 15px; color: white;
+            transition: transform 0.1s;
+            pointer-events: auto; /* Ensures it is always clickable */
+        }
+        .btn:active { background: #41eadd; transform: scale(0.95); }
+        .btn.disabled { opacity: 0.4; border-color: #555; pointer-events: none; filter: grayscale(100%); }
+
+        .upgrade-row {
+            display: flex; align-items: center; justify-content: space-between;
+            width: 350px; background: rgba(0,0,0,0.6); padding: 10px;
+            border-radius: 15px; margin-bottom: 10px;
+        }
+        .dots { display: flex; gap: 5px; font-size: 20px; }
+        
+        #dietMenu h1 { font-size: 60px; margin: 0 0 20px 0; }
+        .score-display { font-size: 50px; color: #ffca3a; margin-bottom: 20px; }
+
+        /* Slider Styling */
+        .slider-container {
+            margin-top: 40px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 20px 30px;
+            border-radius: 20px;
+            border: 2px solid #ff6b6b;
+            text-align: center;
+            pointer-events: auto;
+        }
+        .slider-label {
+            color: #fff;
+            font-size: 28px;
+            margin-bottom: 15px;
+            display: block;
+        }
+        input[type=range] {
+            width: 250px;
+            accent-color: #ff6b6b;
+            cursor: pointer;
+            height: 15px;
+            border-radius: 10px;
+            /* Critical fix for iOS/Tablets to allow dragging */
+            touch-action: pan-x; 
+            -webkit-user-select: auto;
+            user-select: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="dietMenu" class="overlay">
+        <h1>🍽️❓</h1>
+        <div style="display: flex;">
+            <button class="btn" onclick="startGame('herbivore')" ontouchend="startGame('herbivore')">🌿</button>
+            <button class="btn" onclick="startGame('carnivore')" ontouchend="startGame('carnivore')">🥩</button>
+        </div>
+        
+        <div class="slider-container">
+            <label for="enemySlider" class="slider-label">🦠 <span id="enemyCountDisplay">3</span></label>
+            <input type="range" id="enemySlider" min="0" max="10" value="3" 
+                   oninput="updateSliderText(this.value)" 
+                   onchange="updateSliderText(this.value)">
+        </div>
+    </div>
+
+    <div id="ui-score" class="hidden">⭐ <span id="score">0</span></div>
+    <button id="btn-evolve" onclick="openUpgradeMenu()" ontouchend="openUpgradeMenu()">🧬</button>
+
+    <div id="upgradeMenu" class="overlay hidden">
+        <div class="score-display">⭐ <span id="menu-score">0</span></div>
+        
+        <div class="upgrade-row">
+            <button class="btn" id="btn-eyes" onclick="buyUpgrade('eyes', 10)" ontouchend="buyUpgrade('eyes', 10)">👁️ 10⭐</button>
+            <div class="dots" id="dots-eyes">⚪⚪⚪</div>
+        </div>
+        <div class="upgrade-row">
+            <button class="btn" id="btn-flags" onclick="buyUpgrade('flags', 15)" ontouchend="buyUpgrade('flags', 15)">〰️ 15⭐</button>
+            <div class="dots" id="dots-flags">⚪⚪⚪⚪</div>
+        </div>
+        <div class="upgrade-row">
+            <button class="btn" id="btn-shields" onclick="buyUpgrade('shields', 15)" ontouchend="buyUpgrade('shields', 15)">🛡️ 15⭐</button>
+            <div class="dots" id="dots-shields">⚪⚪⚪⚪</div>
+        </div>
+
+        <button class="btn" onclick="closeUpgradeMenu()" ontouchend="closeUpgradeMenu()" style="margin-top: 30px;">▶️</button>
+    </div>
+
+    <div id="winMenu" class="overlay hidden">
+        <h1 style="font-size: 80px; margin: 0;">🏆🎉</h1>
+        <button class="btn" onclick="location.reload()" ontouchend="location.reload()">🔄</button>
+    </div>
+
+    <div id="gameOverMenu" class="overlay hidden">
+        <h1 style="font-size: 80px; margin: 0;">💀</h1>
+        <button class="btn" onclick="location.reload()" ontouchend="location.reload()">🔄</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let mouseX = window.innerWidth / 2;
+        let mouseY = window.innerHeight / 2;
+        let isMoving = false; 
+        let baseEnemyCount = 3; 
+
+        // Funkce volaná přímo z HTML slideru
+        function updateSliderText(val) {
+            document.getElementById('enemyCountDisplay').innerText = val;
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            mouseX = canvas.width / 2;
+            mouseY = canvas.height / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        let isPaused = true;
+        let animationId;
+        let frameCount = 0;
+        let lastAutoOpenPoints = -1;
+
+        const MAX_EYES = 3;
+        const MAX_FLAGS = 4;
+        const MAX_SHIELDS = 4;
+
+        const player = {
+            x: 0, y: 0,
+            r: 25, color: '#41eadd',
+            baseSpeed: 4, speed: 4,
+            angle: 0, points: 0, diet: '',
+            upgrades: { eyes: 0, flags: 0, shields: 0 },
+            activeShields: 0, invulnerable: 0
+        };
+
+        const foods = [];
+        const enemies = [];
+        let baseMaxFood = 30;
+
+        // --- OVLÁDÁNÍ ---
+        function setTarget(x, y) {
+            mouseX = x; mouseY = y;
+            isMoving = true;
+        }
+
+        function stopMovement() {
+            mouseX = canvas.width / 2;
+            mouseY = canvas.height / 2;
+            isMoving = false;
+        }
+
+        canvas.addEventListener('mousemove', (e) => setTarget(e.clientX, e.clientY));
+        canvas.addEventListener('mouseleave', stopMovement);
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); 
+            setTarget(e.touches[0].clientX, e.touches[0].clientY);
+        }, {passive: false});
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault(); 
+            setTarget(e.touches[0].clientX, e.touches[0].clientY);
+        }, {passive: false});
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault(); 
+            stopMovement();
+        }, {passive: false});
+
+        // --- START HRY ---
+        function startGame(diet) {
+            // Zabráníme dvojitému spuštění (pokud by se trefil onclick i ontouchend)
+            if(!isPaused) return; 
+
+            let sliderElement = document.getElementById('enemySlider');
+            if(sliderElement) {
+                baseEnemyCount = parseInt(sliderElement.value);
+            }
+
+            player.diet = diet;
+            player.color = diet === 'herbivore' ? '#74c69d' : '#ff6b6b';
+            
+            document.getElementById('dietMenu').classList.add('hidden');
+            document.getElementById('ui-score').classList.remove('hidden');
+            document.getElementById('btn-evolve').style.display = 'block';
+            
+            isPaused = false;
+            gameLoop();
+        }
+
+        // --- SPRÁVA ENTIT ---
+        function manageEntities() {
+            let maxF = baseMaxFood * (1 + player.upgrades.eyes);
+            let meatCount = foods.filter(f => f.type === 'meat').length;
+            let plantCount = foods.length - meatCount;
+
+            while (foods.length < maxF) {
+                let isMeat;
+                if (meatCount < plantCount) { isMeat = true; meatCount++; }
+                else if (plantCount < meatCount) { isMeat = false; plantCount++; }
+                else { isMeat = Math.random() > 0.5; if(isMeat) meatCount++; else plantCount++; }
+
+                let angle = Math.random() * Math.PI * 2;
+                let radius = 200 + Math.random() * 1200; 
+                foods.push({
+                    x: player.x + Math.cos(angle) * radius,
+                    y: player.y + Math.sin(angle) * radius,
+                    type: isMeat ? 'meat' : 'plant',
+                    emoji: isMeat ? '🥩' : '🌿',
+                    r: 15
+                });
+            }
+
+            for (let i = foods.length - 1; i >= 0; i--) {
+                if (Math.hypot(player.x - foods[i].x, player.y - foods[i].y) > 1600) foods.splice(i, 1);
+            }
+
+            let maxEnemies = 0;
+            if (baseEnemyCount > 0) {
+                maxEnemies = baseEnemyCount + player.upgrades.eyes;
+            }
+
+            if (Math.random() < 0.02 && enemies.length < maxEnemies) {
+                let angle = Math.random() * Math.PI * 2;
+                let radius = 1000 + Math.random() * 500; 
+                let size = 30 + (player.upgrades.eyes + player.upgrades.flags) * 5;
+                let speed = 2 + Math.random();
+                let angleToPlayer = Math.atan2(player.y - (player.y + Math.sin(angle)*radius), player.x - (player.x + Math.cos(angle)*radius));
+                
+                enemies.push({
+                    x: player.x + Math.cos(angle) * radius,
+                    y: player.y + Math.sin(angle) * radius,
+                    r: size, emoji: '🦠', speed: speed,
+                    vx: Math.cos(angleToPlayer) * speed,
+                    vy: Math.sin(angleToPlayer) * speed
+                });
+            }
+        }
+
+        // --- HERNÍ LOGIKA ---
+        function update() {
+            if (isPaused) return;
+            frameCount++;
+
+            let dx = mouseX - canvas.width / 2;
+            let dy = mouseY - canvas.height / 2;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > 20 && isMoving) {
+                player.x += (dx / dist) * player.speed;
+                player.y += (dy / dist) * player.speed;
+                player.angle = Math.atan2(dy, dx);
+            }
+
+            if (player.invulnerable > 0) player.invulnerable--;
+
+            manageEntities();
+
+            // Jídlo
+            for (let i = foods.length - 1; i >= 0; i--) {
+                let f = foods[i];
+                if (Math.hypot(player.x - f.x, player.y - f.y) < player.r + f.r) {
+                    foods.splice(i, 1);
+                    
+                    if ((player.diet === 'herbivore' && f.type === 'plant') || 
+                        (player.diet === 'carnivore' && f.type === 'meat')) {
+                        player.points++;
+                        if (player.points % 5 === 0 && player.activeShields < player.upgrades.shields) {
+                            player.activeShields++; 
+                        }
+                        if ((player.points === 10 || player.points === 15) && player.points !== lastAutoOpenPoints) {
+                            lastAutoOpenPoints = player.points;
+                            openUpgradeMenu();
+                        }
+                    } else {
+                        player.points = Math.max(0, player.points - 1);
+                    }
+                    document.getElementById('score').innerText = player.points;
+                }
+            }
+
+            // Nepřátelé
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.x += e.vx; e.y += e.vy;
+
+                if (Math.random() < 0.02) {
+                    let angleToPlayer = Math.atan2(player.y - e.y, player.x - e.x) + (Math.random() - 0.5);
+                    e.vx = Math.cos(angleToPlayer) * e.speed;
+                    e.vy = Math.sin(angleToPlayer) * e.speed;
+                }
+
+                if (Math.hypot(player.x - e.x, player.y - e.y) > 2500) {
+                    enemies.splice(i, 1);
+                    continue;
+                }
+
+                if (player.invulnerable === 0 && Math.hypot(player.x - e.x, player.y - e.y) < player.r + e.r - 10) {
+                    if (player.activeShields > 0) {
+                        player.activeShields--;
+                        player.invulnerable = 60; 
+                        e.vx *= -1; e.vy *= -1; 
+                    } else {
+                        isPaused = true;
+                        document.getElementById('gameOverMenu').classList.remove('hidden');
+                    }
+                }
+            }
+        }
+
+        // --- ORGANICKÉ POZADÍ ---
+        function deterministicRandom(x, y) {
+            let n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+            return n - Math.floor(n);
+        }
+
+        function drawOrganicBackground(cameraX, cameraY) {
+            let cellSize = 120; 
+            let startX = Math.floor(cameraX / cellSize) * cellSize;
+            let startY = Math.floor(cameraY / cellSize) * cellSize;
+            
+            for (let x = startX; x < cameraX + canvas.width + cellSize; x += cellSize) {
+                for (let y = startY; y < cameraY + canvas.height + cellSize; y += cellSize) {
+                    
+                    let rand1 = deterministicRandom(x, y);
+                    let rand2 = deterministicRandom(x + 100, y + 100);
+                    
+                    let wobbleX = Math.sin(frameCount * 0.02 + rand1 * 10) * 12;
+                    let wobbleY = Math.cos(frameCount * 0.02 + rand2 * 10) * 12;
+
+                    let posX = x + (rand1 * cellSize) + wobbleX;
+                    let posY = y + (rand2 * cellSize) + wobbleY;
+                    let size = 3 + rand1 * 18; 
+
+                    ctx.beginPath();
+                    ctx.arc(posX, posY, size, 0, Math.PI * 2);
+                    
+                    if (rand2 > 0.5) {
+                        ctx.fillStyle = `rgba(65, 234, 221, ${0.03 + rand1 * 0.08})`;
+                        ctx.fill();
+                    } else {
+                        ctx.strokeStyle = `rgba(65, 234, 221, ${0.05 + rand1 * 0.08})`;
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            let cameraX = player.x - canvas.width / 2;
+            let cameraY = player.y - canvas.height / 2;
+
+            ctx.save();
+            ctx.translate(-cameraX, -cameraY);
+
+            drawOrganicBackground(cameraX, cameraY);
+
+            ctx.font = "24px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            foods.forEach(f => ctx.fillText(f.emoji, f.x, f.y));
+            
+            ctx.font = "40px Arial";
+            enemies.forEach(e => ctx.fillText(e.emoji, e.x, e.y));
+
+            // HRÁČ
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);
+
+            if (player.invulnerable % 10 > 5) ctx.globalAlpha = 0.5;
+
+            // Bičíky
+            ctx.strokeStyle = player.color;
+            ctx.lineWidth = 4;
+            let wave = Math.sin(frameCount * 0.2) * 10;
+            for (let i = 0; i < player.upgrades.flags; i++) {
+                let yOffset = (i - (player.upgrades.flags - 1) / 2) * 12;
+                ctx.beginPath();
+                ctx.moveTo(-player.r, yOffset);
+                ctx.quadraticCurveTo(-player.r - 20, yOffset + wave, -player.r - 40, yOffset);
+                ctx.stroke();
+            }
+
+            // Tělo
+            ctx.beginPath();
+            ctx.arc(0, 0, player.r, 0, Math.PI * 2);
+            ctx.fillStyle = player.color; ctx.fill();
+            ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
+
+            // Oči
+            ctx.fillStyle = 'white';
+            for (let i = 0; i < player.upgrades.eyes; i++) {
+                let angleOffset = (i - (player.upgrades.eyes - 1) / 2) * 0.6;
+                let eyeX = Math.cos(angleOffset) * (player.r * 0.6);
+                let eyeY = Math.sin(angleOffset) * (player.r * 0.6);
+                
+                ctx.beginPath(); ctx.arc(eyeX, eyeY, 6, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'black';
+                ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, 3, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'white'; 
+            }
+
+            // Štíty
+            ctx.globalAlpha = 1; 
+            for (let i = 0; i < player.activeShields; i++) {
+                ctx.beginPath();
+                ctx.arc(0, 0, player.r + 10 + (i * 8), 0, Math.PI * 2);
+                ctx.strokeStyle = ['#00a8ff', '#9c88ff', '#fbc531', '#4cd137'][i % 4];
+                ctx.lineWidth = 3; ctx.setLineDash([10, 5]); ctx.stroke();
+            }
+            ctx.setLineDash([]); 
+
+            ctx.restore(); 
+            ctx.restore(); 
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            if (!isPaused) animationId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- MENU LOGIKA ---
+        function openUpgradeMenu() {
+            isPaused = true;
+            document.getElementById('upgradeMenu').classList.remove('hidden');
+            updateMenuUI();
+        }
+
+        function closeUpgradeMenu() {
+            document.getElementById('upgradeMenu').classList.add('hidden');
+            lastAutoOpenPoints = player.points; 
+            isPaused = false;
+            stopMovement(); 
+            gameLoop();
+        }
+
+        function updateMenuUI() {
+            document.getElementById('menu-score').innerText = player.points;
+            
+            document.getElementById('dots-eyes').innerText = '🟢'.repeat(player.upgrades.eyes) + '⚪'.repeat(MAX_EYES - player.upgrades.eyes);
+            let btnEyes = document.getElementById('btn-eyes');
+            if (player.points < 10 || player.upgrades.eyes >= MAX_EYES) btnEyes.classList.add('disabled');
+            else btnEyes.classList.remove('disabled');
+
+            document.getElementById('dots-flags').innerText = '🟢'.repeat(player.upgrades.flags) + '⚪'.repeat(MAX_FLAGS - player.upgrades.flags);
+            let btnFlags = document.getElementById('btn-flags');
+            if (player.points < 15 || player.upgrades.flags >= MAX_FLAGS) btnFlags.classList.add('disabled');
+            else btnFlags.classList.remove('disabled');
+
+            document.getElementById('dots-shields').innerText = '🟢'.repeat(player.upgrades.shields) + '⚪'.repeat(MAX_SHIELDS - player.upgrades.shields);
+            let btnShields = document.getElementById('btn-shields');
+            if (player.points < 15 || player.upgrades.shields >= MAX_SHIELDS) btnShields.classList.add('disabled');
+            else btnShields.classList.remove('disabled');
+
+            if (player.upgrades.eyes === MAX_EYES && player.upgrades.flags === MAX_FLAGS && player.upgrades.shields === MAX_SHIELDS) {
+                document.getElementById('upgradeMenu').classList.add('hidden');
+                document.getElementById('winMenu').classList.remove('hidden');
+            }
+        }
+
+        function buyUpgrade(type, cost) {
+            if (player.points >= cost) {
+                player.points -= cost;
+                document.getElementById('score').innerText = player.points;
+
+                if (type === 'eyes' && player.upgrades.eyes < MAX_EYES) player.upgrades.eyes++;
+                if (type === 'flags' && player.upgrades.flags < MAX_FLAGS) {
+                    player.upgrades.flags++;
+                    player.speed = player.baseSpeed + (player.upgrades.flags * 1.5);
+                }
+                if (type === 'shields' && player.upgrades.shields < MAX_SHIELDS) {
+                    player.upgrades.shields++;
+                    player.activeShields = player.upgrades.shields;
+                }
+                updateMenuUI();
+            }
+        }
+
+    </script>
+</body>
+</html>
