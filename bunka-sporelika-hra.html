@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Evoluce Buňky</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #0d1b2a;
+            overflow: hidden; /* Zamezí scrollování */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; /* Vypne defaultní dotyková gesta prohlížeče (např. pull-to-refresh) */
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #e0e1dd;
+            font-size: 24px;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        /* Menu pro vylepšení */
+        #upgradeMenu, #gameOverMenu {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(13, 27, 42, 0.85);
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        h1 { color: #41eadd; margin-bottom: 30px; text-align: center;}
+        .btn {
+            background: #1b263b;
+            color: #e0e1dd;
+            border: 2px solid #41eadd;
+            padding: 15px 40px;
+            margin: 10px;
+            font-size: 20px;
+            border-radius: 30px;
+            cursor: pointer;
+            width: 80%;
+            max-width: 400px;
+            transition: all 0.2s;
+        }
+        .btn:active {
+            background: #41eadd;
+            color: #0d1b2a;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">Potrava: <span id="foodCount">0</span> / <span id="foodTarget">10</span></div>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="upgradeMenu">
+        <h1>Vyvinul ses! Vyber si mutaci:</h1>
+        <button class="btn" onclick="applyUpgrade('speed')">Bičík (Rychlejší pohyb)</button>
+        <button class="btn" onclick="applyUpgrade('vision')">Oči (Vidíš více potravy)</button>
+        <button class="btn" onclick="applyUpgrade('shield')">Obranný štít (Ochrana před útokem)</button>
+    </div>
+
+    <div id="gameOverMenu">
+        <h1 style="color: #ff4d4d;">Byl jsi sežrán!</h1>
+        <button class="btn" onclick="location.reload()">Hrát znovu</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Nastavení velikosti plátna na velikost okna
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Stav hry
+        let isPaused = false;
+        let animationId;
+        
+        // Hráč
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            r: 20,
+            color: '#41eadd',
+            speed: 3,
+            targetX: canvas.width / 2,
+            targetY: canvas.height / 2,
+            angle: 0,
+            foodEaten: 0,
+            levelTarget: 10,
+            level: 1,
+            upgrades: {
+                flagellum: false,
+                eyes: false,
+                shield: false
+            },
+            shieldActive: false
+        };
+
+        const foods = [];
+        const enemies = [];
+        let maxFood = 50;
+
+        // --- OVLÁDÁNÍ (Myš + Dotyk) ---
+        function setTarget(x, y) {
+            player.targetX = x;
+            player.targetY = y;
+        }
+
+        canvas.addEventListener('mousemove', (e) => setTarget(e.clientX, e.clientY));
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            setTarget(e.touches[0].clientX, e.touches[0].clientY);
+        }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            setTarget(e.touches[0].clientX, e.touches[0].clientY);
+        }, {passive: false});
+
+        // --- HERNÍ LOGIKA ---
+        function spawnFood() {
+            if (foods.length < maxFood) {
+                foods.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    r: 4,
+                    color: '#74c69d'
+                });
+            }
+        }
+
+        function spawnEnemy() {
+            // Nepřátelé rostou s levelem hráče
+            let baseRadius = 15 + (player.level * 5);
+            enemies.push({
+                x: Math.random() > 0.5 ? 0 : canvas.width,
+                y: Math.random() * canvas.height,
+                r: baseRadius + Math.random() * 20,
+                color: '#ff4d4d',
+                speed: 1 + Math.random() * 1.5,
+                vx: (Math.random() - 0.5) * 3,
+                vy: (Math.random() - 0.5) * 3
+            });
+        }
+
+        function update() {
+            if (isPaused) return;
+
+            // Pohyb hráče
+            let dx = player.targetX - player.x;
+            let dy = player.targetY - player.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > 5) {
+                player.x += (dx / dist) * player.speed;
+                player.y += (dy / dist) * player.speed;
+                player.angle = Math.atan2(dy, dx); // Úhel natočení pro kreslení
+            }
+
+            // Generování entit
+            if (Math.random() < 0.1) spawnFood();
+            if (Math.random() < 0.01 && enemies.length < 5 + player.level) spawnEnemy();
+
+            // Kolize s potravou
+            for (let i = foods.length - 1; i >= 0; i--) {
+                let f = foods[i];
+                let distToFood = Math.hypot(player.x - f.x, player.y - f.y);
+                if (distToFood < player.r + f.r) {
+                    foods.splice(i, 1);
+                    player.foodEaten++;
+                    document.getElementById('foodCount').innerText = player.foodEaten;
+                    
+                    // Kontrola postupu na další úroveň
+                    if (player.foodEaten >= player.levelTarget) {
+                        triggerEvolution();
+                    }
+                }
+            }
+
+            // Pohyb a kolize nepřátel
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.x += e.vx;
+                e.y += e.vy;
+
+                // Odraz od stěn
+                if (e.x < 0 || e.x > canvas.width) e.vx *= -1;
+                if (e.y < 0 || e.y > canvas.height) e.vy *= -1;
+
+                // Kolize hráče s nepřítelem
+                let distToEnemy = Math.hypot(player.x - e.x, player.y - e.y);
+                if (distToEnemy < player.r + e.r - 5) { // -5 pro toleranci
+                    if (player.shieldActive) {
+                        // Štít praskne, nepřítel je zničen (odražen)
+                        player.shieldActive = false;
+                        enemies.splice(i, 1);
+                        // Vizuální efekt prasknutí by se dal přidat zde
+                    } else if (player.r < e.r) {
+                        // Konec hry
+                        gameOver();
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Vykreslení potravy
+            foods.forEach(f => {
+                ctx.beginPath();
+                ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+                ctx.fillStyle = f.color;
+                ctx.fill();
+            });
+
+            // Vykreslení nepřátel
+            enemies.forEach(e => {
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+                ctx.fillStyle = e.color;
+                ctx.fill();
+                // Kreslení "bodlin" nepřátelům
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#b30000';
+                ctx.stroke();
+            });
+
+            // VYKRESLENÍ HRÁČE
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);
+
+            // Bičík (Vykresluje se za buňkou)
+            if (player.upgrades.flagellum) {
+                ctx.beginPath();
+                ctx.moveTo(-player.r, 0);
+                // Vlnění bičíku na základě času
+                let wave = Math.sin(Date.now() / 100) * 10;
+                ctx.quadraticCurveTo(-player.r - 15, wave, -player.r - 30, 0);
+                ctx.strokeStyle = player.color;
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+
+            // Tělo buňky
+            ctx.beginPath();
+            ctx.arc(0, 0, player.r, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.fill();
+
+            // Oči (Vykreslují se ve směru pohybu)
+            if (player.upgrades.eyes) {
+                ctx.fillStyle = 'white';
+                ctx.beginPath(); ctx.arc(player.r / 2, -player.r / 2.5, player.r / 4, 0, Math.PI * 2); ctx.fill(); // Levé
+                ctx.beginPath(); ctx.arc(player.r / 2, player.r / 2.5, player.r / 4, 0, Math.PI * 2); ctx.fill(); // Pravé
+                
+                ctx.fillStyle = 'black';
+                ctx.beginPath(); ctx.arc(player.r / 2 + 2, -player.r / 2.5, player.r / 8, 0, Math.PI * 2); ctx.fill(); // Levá zornička
+                ctx.beginPath(); ctx.arc(player.r / 2 + 2, player.r / 2.5, player.r / 8, 0, Math.PI * 2); ctx.fill(); // Pravá zornička
+            }
+
+            // Štít (Vykresluje se okolo)
+            if (player.upgrades.shield && player.shieldActive) {
+                ctx.beginPath();
+                ctx.arc(0, 0, player.r + 8, 0, Math.PI * 2);
+                ctx.strokeStyle = '#00a8ff';
+                ctx.lineWidth = 4;
+                ctx.setLineDash([10, 5]); // Přerušovaná čára pro efekt energetického pole
+                ctx.stroke();
+                ctx.setLineDash([]); // Reset
+            }
+
+            ctx.restore();
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            if (!isPaused) {
+                animationId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // --- MENU A UDÁLOSTI ---
+        function triggerEvolution() {
+            isPaused = true;
+            document.getElementById('upgradeMenu').style.display = 'flex';
+        }
+
+        function gameOver() {
+            isPaused = true;
+            document.getElementById('gameOverMenu').style.display = 'flex';
+        }
+
+        function applyUpgrade(type) {
+            if (type === 'speed') {
+                player.speed += 1.5;
+                player.upgrades.flagellum = true;
+            } else if (type === 'vision') {
+                maxFood += 50; // Spawnuje se mnohem více jídla
+                for(let i=0; i<20; i++) spawnFood(); // Okamžitě přidá jídlo
+                player.upgrades.eyes = true;
+            } else if (type === 'shield') {
+                player.upgrades.shield = true;
+                player.shieldActive = true;
+            }
+
+            // Zvětšení buňky a reset levelu
+            player.r += 10;
+            player.level++;
+            player.foodEaten = 0;
+            player.levelTarget = Math.floor(player.levelTarget * 1.5); // Další level bude těžší
+            
+            // Obnova štítu na začátku každého levelu, pokud ho hráč vlastní
+            if (player.upgrades.shield) player.shieldActive = true;
+
+            // Aktualizace UI
+            document.getElementById('foodCount').innerText = player.foodEaten;
+            document.getElementById('foodTarget').innerText = player.levelTarget;
+
+            // Skrytí menu a pokračování
+            document.getElementById('upgradeMenu').style.display = 'none';
+            isPaused = false;
+            gameLoop(); // Znovuspuštění smyčky
+        }
+
+        // Start hry
+        for(let i=0; i<30; i++) spawnFood(); // Počáteční jídlo
+        gameLoop();
+
+    </script>
+</body>
+</html>
